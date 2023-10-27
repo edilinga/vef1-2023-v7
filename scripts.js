@@ -173,11 +173,11 @@ function formatProduct(product, quantity = undefined) {
  * CSS sokkar — 2x3.000 kr. samtals 6.000 kr.
  * Samtals: 11.000 kr.
  * ```
- * @param {Cart} cart Karfa til að fá upplýsingar um.
+ * @param {Array} cart Karfa til að fá upplýsingar um.
  * @returns Streng sem inniheldur upplýsingar um körfu.
  */
 function cartInfo(cart) {
-  /* Útfæra */
+  
 }
 
 // --------------------------------------------------------
