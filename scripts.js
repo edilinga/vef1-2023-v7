@@ -121,11 +121,20 @@ const cart = {
  * const price = formatPrice(123000);
  * console.log(price); // Skrifar út `123.000 kr.`
  * @param {number} price Verð til að sníða.
- * @returns {string} Verð sniðið með íslenskum krónu.
+ * @returns Verð sniðið með íslenskum krónu.
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl
  */
 function formatPrice(price) {
-  return price.toString();
+  // Gefið að Chrome höndlar þetta ekki rétt myndum við nota eitthvað annað ef við værum að
+  // útbúa raunverulega vefverslun.
+  // Hér þurfum við að fletta upp skjölun á `Intl` og `NumberFormat` til að sjá hvernig við notum
+  // til að sníða verðið eins og við viljum.
+  const formatter = new Intl.NumberFormat('is-IS', {
+    style: 'currency',
+    currency: 'ISK',
+  });
+
+  return formatter.format(price);
 }
 
 /**
@@ -136,7 +145,12 @@ function formatPrice(price) {
  * @returns `true` ef `num` er heiltala á bilinu `[min, max]`, annars `false`.
  */
 function validateInteger(num, min = 0, max = Infinity) {
-  return min <= num && num <= max;
+  // `Number.isInteger` skilar `true` ef gildi er heiltala, annars `false`.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/isInteger
+  // Með boolean gildum getum við notað `&&` til að athuga hvort bæði talan sé heiltala og hvort
+  // hún sé á bilinu `[min, max]`, röðum þannig að auðvelt sé að lesa úr lógík (ólíkt því að raða
+  // t.d. `num >= min && num <= max`)
+  return Number.isInteger(num) && min <= num && num <= max;
 }
 
 /**
@@ -151,18 +165,34 @@ function validateInteger(num, min = 0, max = Infinity) {
  * @returns Streng sem inniheldur upplýsingar um vöru og hugsanlega fjölda af henni.
  */
 function formatProduct(product, quantity = undefined) {
-  // Falsy gildi
-  // "", 0, 
-  // Truthy gildi:
-  // Öll gildi sem ekki eru falsy,  t.d.
-  // 1, '1', true, [], {}
+  // Fall sem getur unnið bæði beint með vöru og línu í körfu svo við þurfum ekki tvö mismunandi
+  // föll sem gera mjög svipaða hluti.
 
-  if (quantity && quantity > 1) {
-    const total = formatPrice(quantity * product.price);
-    return `${product.title}-${quantity}x${formatPrice(product.price)} samtals ${total}`;
+  // Hér notum við „destructuring“ til að fá titil og verð af vörunni.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring_assignment
+  const { title, price } = product;
+
+  // Formum verðið með því að nota hjálparfallið okkar.
+  const formattedPrice = formatPrice(price);
+
+  // Ef það er ekki `quantity` skilgreint þá erum við að vinna með vöru og ekki línu í körfu.
+  // `!quantity` er satt ef `quantity` er `undefined`, `null`, `0`, `NaN`, `''`, `false` eða `0n`.
+  // Þetta virkar vegna „falsy“ gildanna í JavaScript.
+  // https://developer.mozilla.org/en-US/docs/Glossary/Falsy
+  // `!validateInteger(quantity, 1)` er satt ef `quantity` er ekki heiltala stærri en 0.
+  // þ.e.a.s. við viljum ekki birta fjölda ef hann er ekki löglegur.
+  if (!quantity || !validateInteger(quantity, 1)) {
+    // Skilum beint titli og sniðnu verði.
+    // Hér notum við „template literals“ til að búa til streng sem inniheldur breytur.
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals
+    return `${title} — ${formattedPrice}\n`;
   }
-  
-  return `${product.title}-${product.price}`;
+
+  // Bætum heildarverði við línu ef fjöldi er > 1.
+  const total = formatPrice(price * quantity);
+
+  // Skilum upplýsingum um vöru, fjölda og heildarverði.
+  return `${title} — ${quantity}x${formattedPrice} samtals ${total}\n`;
 }
 
 /**
@@ -173,11 +203,41 @@ function formatProduct(product, quantity = undefined) {
  * CSS sokkar — 2x3.000 kr. samtals 6.000 kr.
  * Samtals: 11.000 kr.
  * ```
- * @param {Array} cart Karfa til að fá upplýsingar um.
+ * @param {Cart} cart Karfa til að fá upplýsingar um.
  * @returns Streng sem inniheldur upplýsingar um körfu.
  */
 function cartInfo(cart) {
-  
+  // Hér tökum við inn körfuna sem við viljum birta upplýsingar um í staðinn fyrir að nota breytuna
+  // `cart` sem við skilgreindum fyrst í skjalinu. Sú breyta er „global“ og er því aðgengileg í
+  // öllum föllum í skjalinu. Það er getur verið vandasamt að nota global breytur því þær geta
+  // breyst eða verið breytt af föllum óbeint (implicit) og með því búum við til tengsl milli gagna
+  // og falla sem geta búið til óvænta hegðun og villur.
+  // Með því að taka inn gildi sem við viljum vinna með í staðinn fyrir að nota global breytur
+  // getum við gert fallið okkar „hreint“ (pure): það breytir engu sem er utan fallsins og skilar
+  // alltaf sama gildi fyrir sama inntak.
+  // https://en.wikipedia.org/wiki/Pure_function
+
+  // Við erum að fara að vinna með hugsanlega nokkrar línur, búum til streng sem við bætum línum við
+  // til þess notum við `let`, ef við værum að nota `const` myndum við ekki geta breytt strengnum.
+  let output = '';
+
+  // Sama með heildarverð
+  let cartTotal = 0;
+
+  // Ítrum í gegnum línu í körfu
+  for (const line of cart.lines) {
+    // Bætum við upplýsingum um vöru í `output`
+    output += formatProduct(line.product, line.quantity);
+
+    // Bætum við verði línu við heildarverð
+    cartTotal += line.product.price * line.quantity;
+  }
+
+  // Bætum við upplýsingum um heildarverð
+  output += `Samtals: ${formatPrice(cartTotal)}`;
+
+  // Skilum strengnum sem inniheldur upplýsingar um körfu.
+  return output;
 }
 
 // --------------------------------------------------------
@@ -250,7 +310,6 @@ function addProduct() {
     price,
   };
 
-  console.log(product)
   // Bætum vörunni aftast við fylkið okkar.
   products.push(product);
 
@@ -270,8 +329,17 @@ function addProduct() {
  * @returns undefined
  */
 function showProducts() {
-  /* Útfæra */
-  /* Hér ætti að nota `formatPrice` hjálparfall */
+  // Sama lógík og við notum í `cartInfo` til að búa til streng sem inniheldur upplýsingar um vörur
+  // nema hér erum við að birta allar upplýsingar um vörurnar.
+  let output = '';
+  for (const product of products) {
+    const price = formatPrice(product.price);
+    const productInfo = `#${product.id} ${product.title} — ${product.description} — ${price}\n`;
+    output += productInfo;
+  }
+
+  // Skilum ekki heldur birtum við strenginn sem inniheldur upplýsingar um vörur í console.
+  console.info(output);
 }
 
 /**
@@ -290,11 +358,87 @@ function showProducts() {
  * @returns undefined
  */
 function addProductToCart() {
-  /* Útfæra */
+  // Sama lógík og í `addProduct` til að fá ID frá notanda.
+  const idAsString = prompt(
+    'Sláðu inn auðkenni (ID) á vöru sem þú vilt bæta í körfu:',
+  );
 
-  /* Hér ætti að nota `validateInteger` hjálparfall til að staðfesta gögn frá notanda */
-  
-  /* Til að athuga hvort vara sé til í `cart` þarf að nota `cart.lines.find` */
+  // Notandi ýtti á „Cancel“ eða „Escape“
+  if (!idAsString) {
+    return;
+  }
+
+  const id = Number.parseInt(idAsString, 10);
+
+  if (!validateInteger(id, 1, products.length)) {
+    console.error(
+      'Auðkenni vöru er ekki löglegt, verður að vera heiltala stærri en 0.',
+    );
+    return;
+  }
+
+  // Ef við komumst hingað er auðkenni löglegt (það er heiltala) og við getum fundið vöruna.
+  // Hér notum við „arrow function“ sem er stytting fyrir `function (p) { return p.id === id; }`
+  // með nokkrum undantekningum sem við komum ekki fyrir hér sjá nánar:
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/Arrow_functions
+  // Hér verður `id` á vöru að vera einkvæmt til að finna rétta vöru, annars finnur `find` fyrsta vöruna með það `id`.
+  // `find` skilar `undefined` ef ekkert stak í fylkinu uppfyllir skilyrðið „stak í fylkinu með `id` jafnt gefnu `id`“.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/find
+  const product = products.find((p) => p.id === id);
+
+  // Bregðumst við því ef vara fannst ekki, _ætti_ ekki að gerast því við athugum að auðkennið sé
+  // löglegt m.v. lengd fylkis og reglan okkar er að auðkenni sé alltaf staða staks í fylki.
+  // Þetta er dæmi um „defensive programming“ þar sem við bregðumst við óvæntum aðstæðum sem geta
+  // tæknilega komið upp.
+  // https://en.wikipedia.org/wiki/Defensive_programming
+  if (!product) {
+    console.error('Vara fannst ekki.');
+    return;
+  }
+
+  // Fáum fjölda sem á að setja í körfu.
+  const quantityAsString = prompt(`Sláðu inn fjölda sem þú vilt bæta í körfu:`);
+
+  // Notandi ýtti á „Cancel“ eða „Escape“
+  if (!quantityAsString) {
+    return;
+  }
+
+  const quantity = Number.parseInt(quantityAsString, 10);
+
+  if (!validateInteger(quantity, 1, 100)) {
+    console.error('Fjöldi er ekki löglegur, lágmark 1 og hámark 99.');
+    return;
+  }
+
+  // Er vara nú þegar í körfu? Finnum hana til að bæta við fjölda ef svo er.
+  const line = cart.lines.find((l) => l.product.id === id);
+
+  // Ef við finnum línu með þessari vöru, uppfærum hana
+  if (line) {
+    // Bætum við fjöldann með því að nota `+=` sem er stytting fyrir
+    // `line.quantity = line.quantity + quantity`.
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators#increment_and_decrement
+    line.quantity += quantity;
+    console.info(
+      `Vöru fjöldi uppfærður:\n${formatProduct(line.product, line.quantity)}`,
+    );
+    // Annars bætum við við nýrri línu
+  } else {
+    // Búum til línuna okkar
+
+    /** type {CartLine} */
+    const line = {
+      product,
+      quantity,
+    };
+
+    // Bætum línu við körfu aftast
+    cart.lines.push(line);
+    console.info(
+      `Vöru bætt við körfu:\n${formatProduct(line.product, line.quantity)}`,
+    );
+  }
 }
 
 /**
@@ -310,7 +454,13 @@ function addProductToCart() {
  * @returns undefined
  */
 function showCart() {
-  /* Útfæra */
+  // Ef lengd fylkis er 0 eru engar vörur í körfunni.
+  if (cart.lines.length === 0) {
+    console.info('Karfan er tóm.');
+    return;
+  }
+
+  console.info(cartInfo(cart));
 }
 
 /**
@@ -332,5 +482,33 @@ function showCart() {
  * @returns undefined
  */
 function checkout() {
-  /* Útfæra */
+  // Hér notum við sömu aðferðir og áður til að útfæra fallið.
+  if (cart.lines.length === 0) {
+    console.info('Karfan er tóm.');
+    return;
+  }
+
+  const name = prompt('Nafn:');
+  if (!name) {
+    console.error('Nafn má ekki vera tómt.');
+    return;
+  }
+  // Hér bætum við nafni við `cart` hlutinn okkar sem er global breyta.
+  cart.name = name;
+
+  const address = prompt('Heimilisfang:');
+  if (!address) {
+    console.error('Heimilisfang má ekki vera tómt.');
+    return;
+  }
+  cart.address = address;
+
+  // Notum „template literals“ og þann möguleik á að setja srengi í nýjar línur í staðinn fyrir að
+  // nota `\n` eins og við gerðum í `cartInfo`.
+  const output = `Pöntun móttekin ${name}.
+Vörur verða sendar á ${address}.
+
+${cartInfo(cart)}`;
+
+  console.info(output);
 }
